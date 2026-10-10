@@ -6,7 +6,7 @@
 // @name:zh-TW   搜尋欄增強
 // @namespace    https://github.com/teiny/UserScript
 // @homepageURL  https://github.com/teiny/UserScript
-// @version      1.0.1
+// @version      1.0.2
 // @description  在页面顶部使用图标切换搜索引擎，沿用当前搜索词；支持自定义网站、关键词选择符、图标缓存，并减少与顶部搜索框的遮挡。
 // @description:en    Switch search engines from a top icon bar using the current query. Supports custom sites, search input selectors, cached icons and floating search header offsets.
 // @description:zh    在页面顶部使用图标切换搜索引擎，沿用当前搜索词；支持自定义网站、关键词选择符、图标缓存，并减少与顶部搜索框的遮挡。
@@ -398,7 +398,15 @@
                 var offsets = [];
                 candidates.forEach(function(el){
                     if(!el.isConnected){ candidates.delete(el); return; }
-                    var style = getComputedStyle(el), top = parseFloat(style.top);
+                    var style = getComputedStyle(el), originalTop = style.top;
+                    //top 过渡中读到的是动画中间值，使用终点才能取得页面的原始偏移。
+                    el.getAnimations().forEach(function(animation){
+                        if(animation.transitionProperty === "top"){
+                            var frames = animation.effect.getKeyframes();
+                            originalTop = frames[frames.length - 1].top;
+                        }
+                    });
+                    var top = parseFloat(originalTop);
                     var rect = el.getBoundingClientRect();
                     //浮动容器可能没有自身高度，使用可见搜索框的边界判断。
                     if(!rect.width || !rect.height){
@@ -417,7 +425,7 @@
                             if(/auto|scroll|hidden/.test(getComputedStyle(parent).overflowY)) return;
                         }
                     }
-                    offsets.push({element:el, top:style.top, position:style.position});
+                    offsets.push({element:el, top:originalTop, position:style.position});
                 });
                 offsets.forEach(function(item){
                     if(item.position !== "fixed" && item.element.parentElement.closest('[data-wish-search-offset]')) return;
