@@ -6,7 +6,7 @@
 // @name:zh-TW   搜尋欄增強
 // @namespace    https://github.com/teiny/UserScript
 // @homepageURL  https://github.com/teiny/UserScript
-// @version      1.0.0
+// @version      1.0.1
 // @description  在页面顶部使用图标切换搜索引擎，沿用当前搜索词；支持自定义网站、关键词选择符、图标缓存，并减少与顶部搜索框的遮挡。
 // @description:en    Switch search engines from a top icon bar using the current query. Supports custom sites, search input selectors, cached icons and floating search header offsets.
 // @description:zh    在页面顶部使用图标切换搜索引擎，沿用当前搜索词；支持自定义网站、关键词选择符、图标缓存，并减少与顶部搜索框的遮挡。
@@ -346,7 +346,18 @@
             offsetStyle.textContent = 'html{padding-top:calc(' + padding + 'px + var(--wish-search-height,0px))!important;}' +
                 '[data-wish-search-offset]{top:calc(var(--wish-search-original-top) + var(--wish-search-height,0px))!important;}';
             document.head.appendChild(offsetStyle);
-            var candidates = new Set(), scanRoots = new Set([document.body]), frame = 0;
+            var candidates = new Set(), scanRoots = new Set([document.body]), frame = 0, scanSearch = false;
+            var searchSelector = 'input:not([type="hidden"]),textarea,[role="search"]';
+            var updateCandidate = function(el){
+                if(wrapper.contains(el)) return;
+                var style = getComputedStyle(el);
+                //absolute 只处理相对文档定位、包含搜索框的顶部区域。
+                var absoluteSearch = style.position === "absolute" &&
+                    ((el.offsetParent === document.body && getComputedStyle(document.body).position === "static") || el.offsetParent === root) &&
+                    (el.matches(searchSelector) || el.querySelector(searchSelector));
+                if(style.position === "fixed" || style.position === "sticky" || absoluteSearch) candidates.add(el);
+                else candidates.delete(el);
+            }
             var queueScan = function(el){
                 if(el.nodeType !== 1 || wrapper.contains(el)) return;
                 for(var root of scanRoots){
@@ -357,6 +368,7 @@
             }
             var observe = function(){
                 observer.observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:["class", "style", "hidden"]});
+                observer.observe(root, {attributes:true, attributeFilter:["class", "style", "hidden"]});
             }
             var refresh = function(){
                 frame = 0;
@@ -366,25 +378,39 @@
                 root.style.setProperty("--wish-search-height", height + "px");
                 scanRoots.forEach(function(scanRoot){
                     if(!scanRoot.isConnected) return;
-                    [scanRoot].concat(Array.from(scanRoot.querySelectorAll("*"))).forEach(function(el){
-                        if(wrapper.contains(el)) return;
-                        var style = getComputedStyle(el);
-                        //absolute 只处理相对文档定位、包含搜索框的顶部区域。
-                        var absoluteSearch = style.position === "absolute" &&
-                            ((el.offsetParent === document.body && getComputedStyle(document.body).position === "static") || el.offsetParent === root) &&
-                            el.querySelector('input[name],textarea[name],[role="search"]');
-                        if(style.position === "fixed" || style.position === "sticky" || absoluteSearch) candidates.add(el);
-                        else candidates.delete(el);
-                    });
+                    [scanRoot].concat(Array.from(scanRoot.querySelectorAll("*"))).forEach(updateCandidate);
                 });
                 scanRoots.clear();
+                //滚动后搜索区可能才变为浮动定位，只重新检查搜索框及其祖先。
+                if(scanSearch){
+                    var checked = new Set();
+                    document.body.querySelectorAll(searchSelector).forEach(function(field){
+                        var rect = field.getBoundingClientRect();
+                        if(!rect.width || !rect.height || wrapper.contains(field)) return;
+                        for(var el = field; el && el !== document.body; el = el.parentElement){
+                            if(checked.has(el)) break;
+                            checked.add(el);
+                            updateCandidate(el);
+                        }
+                    });
+                    scanSearch = false;
+                }
                 var offsets = [];
                 candidates.forEach(function(el){
                     if(!el.isConnected){ candidates.delete(el); return; }
                     var style = getComputedStyle(el), top = parseFloat(style.top);
                     var rect = el.getBoundingClientRect();
-                    if(!isFinite(top) || top < 0 || top > 160 || !rect.width || !rect.height || rect.height > innerHeight / 2) return;
-                    if(style.position !== "sticky" && (rect.top < 0 || rect.top > 160 + height)) return;
+                    //浮动容器可能没有自身高度，使用可见搜索框的边界判断。
+                    if(!rect.width || !rect.height){
+                        var field = Array.from(el.querySelectorAll(searchSelector)).find(function(field){
+                            var box = field.getBoundingClientRect();
+                            return box.width && box.height;
+                        });
+                        if(field) rect = field.getBoundingClientRect();
+                    }
+                    if(!isFinite(top) || top > 160 || !rect.width || !rect.height || rect.height > innerHeight / 2) return;
+                    //保留负偏移和暂时移出视口的区域，防止滚动动画结束后再次遮挡。
+                    if(style.position === "fixed" && rect.top > 160 + height) return;
                     //嵌套滚动容器中的吸顶元素不需要为视口顶部栏避让。
                     if(style.position === "sticky"){
                         for(var parent = el.parentElement; parent && parent !== document.body; parent = parent.parentElement){
@@ -414,7 +440,7 @@
                         Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).some(function(node){
                             return node.nodeType === 1 && (node.matches('style,link[rel="stylesheet"]') || node.querySelector('style,link[rel="stylesheet"]'));
                         });
-                    if(changesStyle) queueScan(document.body);
+                    if(changesStyle || record.target === root) queueScan(document.body);
                     else if(record.type === "attributes") queueScan(record.target);
                     else if(Array.from(record.addedNodes).concat(Array.from(record.removedNodes)).some(function(node){ return node.nodeType === 1; })){
                         if(record.target !== document.body) queueScan(record.target);
@@ -426,7 +452,7 @@
             var sizeObserver = new ResizeObserver(function(){ schedule(false); });
             sizeObserver.observe(wrapper);
             window.addEventListener("resize", function(){ schedule(true); });
-            window.addEventListener("scroll", function(){ schedule(false); }, {passive:true});
+            window.addEventListener("scroll", function(){ scanSearch = true; schedule(false); }, {passive:true});
             refresh();
         }
         //搜索触发事件
